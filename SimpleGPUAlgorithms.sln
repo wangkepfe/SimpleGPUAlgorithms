@@ -17,6 +17,8 @@ Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "FloatingPointPrecision", "F
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "Quaternion", "Quaternion\quaternionTest.vcxproj", "{B4DCF814-155F-4882-BBF2-C4E05C295684}"
 EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "ImageSampler", "ImageSampler\ImageSampler.vcxproj", "{D79B8D4C-FDF5-45ED-9A67-1FD862BDE885}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|x64 = Debug|x64
@@ -71,6 +73,14 @@ Global
 		{B4DCF814-155F-4882-BBF2-C4E05C295684}.Release|x64.Build.0 = Release|x64
 		{B4DCF814-155F-4882-BBF2-C4E05C295684}.Release|x86.ActiveCfg = Release|Win32
 		{B4DCF814-155F-4882-BBF2-C4E05C295684}.Release|x86.Build.0 = Release|Win32
+		{D79B8D4C-FDF5-45ED-9A67-1FD862BDE885}.Debug|x64.ActiveCfg = Debug|x64
+		{D79B8D4C-FDF5-45ED-9A67-1FD862BDE885}.Debug|x64.Build.0 = Debug|x64
+		{D79B8D4C-FDF5-45ED-9A67-1FD862BDE885}.Debug|x86.ActiveCfg = Debug|Win32
+		{D79B8D4C-FDF5-45ED-9A67-1FD862BDE885}.Debug|x86.Build.0 = Debug|Win32
+		{D79B8D4C-FDF5-45ED-9A67-1FD862BDE885}.Release|x64.ActiveCfg = Release|x64
+		{D79B8D4C-FDF5-45ED-9A67-1FD862BDE885}.Release|x64.Build.0 = Release|x64
+		{D79B8D4C-FDF5-45ED-9A67-1FD862BDE885}.Release|x86.ActiveCfg = Release|Win32
+		{D79B8D4C-FDF5-45ED-9A67-1FD862BDE885}.Release|x86.Build.0 = Release|Win32
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

@@ -123,6 +123,19 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="bicubic16.cpp" />
+    <ClCompile Include="bicubic4.cpp" />
+    <ClCompile Include="bilinear.cpp" />
+    <ClCompile Include="catmull-rom4.cpp" />
+    <ClCompile Include="catmull-rom5.cpp" />
+    <ClCompile Include="nearest.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <Text Include="CMakeLists.txt" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="stb_image.h" />
+    <ClInclude Include="stb_image_write.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
