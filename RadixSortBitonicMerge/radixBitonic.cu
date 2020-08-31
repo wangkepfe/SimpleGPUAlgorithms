@@ -8,9 +8,11 @@
 #include <iostream>
 #include <stdlib.h>
 #include <time.h>
+#include <random>
 //#include <cmath>
 
 #define uint unsigned int
+#define ushort unsigned short
 
 #define GpuErrorCheck(ans) { GpuAssert((ans), __FILE__, __LINE__); }
 inline void GpuAssert(cudaError_t code, const char* file, int line, bool abort = true)
@@ -23,8 +25,6 @@ inline void GpuAssert(cudaError_t code, const char* file, int line, bool abort =
 }
 
 int DivRound(int n, int m) { return (n + m - 1) / m; }
-
-#if 0
 
 __global__ void Histogram(int* input, int* histogram, int* offset)
 {
@@ -81,52 +81,108 @@ __global__ void Reorder(int* input, int* output, int* orderBuffer, int* numOffse
 	output[idx] = v;
 }
 
-#endif
-
 __global__ void RadixSort(uint * inout)
 {
-	__shared__ uint lds[16];
-	__shared__ uint temp[256];
-
-	uint num = inout[blockIdx.x * blockDim.x + threadIdx.x];
-	uint temp[threadIdx.x] = num;
-
-	for (uint bitOffset = 0; bitOffset < 32; bitOffset += )
+	struct LDS
 	{
+		uint temp[256];
+		ushort histo[16 * 8];
+		ushort histoScan[16];
+	};
 
-	}
-	uint bits = (num & (15u << bitOffset)) >> bitOffset;
+	__shared__ LDS lds;
 
-	if (threadIdx.x < 16) { lds[threadIdx.x] = 0; }
-
+	//------------------------------------ Read data in ----------------------------------------
+    lds.temp[threadIdx.x] = inout[blockIdx.x * blockDim.x + threadIdx.x];
 	__syncthreads();
 
-	// count
-	uint offset = atomicAdd(lds + bits, 1u);
+	// lane id and warp id
+	uint laneId = threadIdx.x & 0x1f;
+	uint warpId = (threadIdx.x & 0xffffffe0) >> 5u;
 
-	__syncthreads();
-
-	// prefix scan
-	if (threadIdx.x < 32)
+	// loop for each 4 bits
+	#pragma unroll
+	for (uint bitOffset = 0; bitOffset < 4 * 8; bitOffset += 4)
 	{
-		uint laneId = threadIdx.x;
-		uint v = (laneId < 16) ? lds[laneId] : 0;
+		// load number
+		uint num = lds.temp[threadIdx.x];
 
-		uint v1 = __shfl_sync(0xffffffff, v, laneId - 1); v = v1;
-		if (laneId == 0) { v = 0; }
-		v1 = __shfl_sync(0xffffffff, v, laneId - 1); if (laneId > 0) { v += v1; }
-		v1 = __shfl_sync(0xffffffff, v, laneId - 2); if (laneId > 1) { v += v1; }
-		v1 = __shfl_sync(0xffffffff, v, laneId - 4); if (laneId > 3) { v += v1; }
-		v1 = __shfl_sync(0xffffffff, v, laneId - 8); if (laneId > 7) { v += v1; }
+		// extract 4 bits
+		uint num4bit = (num & (0xf << bitOffset)) >> bitOffset;
 
-		if (laneId < 16) { lds[laneId] = v; }
+		//------------------------------------ Init LDS ----------------------------------------
+		if (laneId < 16) { lds.histo[warpId * 16 + laneId] = 0; }
+		if (warpId == 0 && laneId < 16) { lds.histoScan[laneId] = 0; }
+		__syncthreads();
+
+		//------------------------------------ Warp count and offset ----------------------------------------
+
+		// mask indicates threads having equal value number with current thread
+		uint mask = 0xffffffff;
+		#pragma unroll
+		for (int i = 0; i < 4; ++i)
+		{
+			uint bitPred = num4bit & (0x1 << i);
+			uint maskOne = __ballot_sync(0xffffffff, bitPred);
+			mask = mask & (bitPred ? maskOne : ~maskOne);
+		}
+
+		// offset of current value number
+		uint pos = __popc(mask & (0xffffffff >> (31u - laneId)));
+
+		// count of current value number
+		uint count = __popc(mask);
+
+		//------------------------------------ Block count and offset ----------------------------------------
+
+		// Re-arrange data for warp level scan
+		if (pos == 1) { lds.histo[warpId * 16 + num4bit] = count; }
+		__syncthreads();
+
+		uint v, v1;
+		if (laneId < 8) { v = lds.histo[laneId * 16 + warpId]; }
+		else if (laneId < 16) { v = lds.histo[(laneId - 8) * 16 + warpId + 8]; }
+		__syncthreads();
+
+		// Warp inclusive scan of 0-7, 8-15
+		v1 = __shfl_sync(0xffffffff, v, laneId - 1); if ((laneId > 0 && laneId < 8) || laneId > 8) { v += v1; }
+		v1 = __shfl_sync(0xffffffff, v, laneId - 2); if ((laneId > 1 && laneId < 8) || laneId > 9) { v += v1; }
+		v1 = __shfl_sync(0xffffffff, v, laneId - 4); if ((laneId > 3 && laneId < 8) || laneId > 11) { v += v1; }
+
+		// Write back
+		if (laneId < 8) { lds.histo[laneId * 16 + warpId] = v; }
+		else if (laneId < 16) { lds.histo[(laneId - 8) * 16 + warpId + 8] = v; }
+		__syncthreads();
+
+		//------------------------------------ Warp prefix scan for histogram ----------------------------------------
+		if (warpId == 7)
+		{
+			v = (laneId < 16) ? lds.histo[warpId * 16 + laneId] : 0;
+
+			v1 = __shfl_sync(0xffffffff, v, laneId - 1); v = v1;
+			if (laneId == 0) { v = 0; }
+
+			v1 = __shfl_sync(0xffffffff, v, laneId - 1); if (laneId > 0) { v += v1; }
+			v1 = __shfl_sync(0xffffffff, v, laneId - 2); if (laneId > 1) { v += v1; }
+			v1 = __shfl_sync(0xffffffff, v, laneId - 4); if (laneId > 3) { v += v1; }
+			v1 = __shfl_sync(0xffffffff, v, laneId - 8); if (laneId > 7) { v += v1; }
+
+			if (laneId < 16) { lds.histoScan[laneId] = v; }
+		}
+		__syncthreads();
+
+		//------------------------------------ Reorder ----------------------------------------
+		uint idxAllNum          = lds.histoScan[num4bit];
+		uint idxCurrentNumBlock = (warpId > 0) ? lds.histo[(warpId - 1) * 16 + num4bit] : 0;
+		uint idxCurrentNumWarp  = pos - 1;
+
+		lds.temp[idxAllNum + idxCurrentNumBlock + idxCurrentNumWarp] = num;
+
+		__syncthreads();
 	}
 
-	__syncthreads();
-
-	// reorder
-	uint idx = lds[bits] + offset;
-	inout[blockIdx.x * blockDim.x + idx] = num;
+	//------------------------------------ Write out ----------------------------------------
+	inout[blockIdx.x * blockDim.x + threadIdx.x] = lds.temp[threadIdx.x];
 }
 
 __global__ void MergeSortedArray(uint * num)
@@ -140,7 +196,7 @@ __global__ void MergeSortedArray(uint * num)
 
 	uint v1, v2, v3, v4, idx1, idx2;
 
-#pragma unroll
+	#pragma unroll
 	for (uint n = 256; n >= 1; n /= 2)
 	{
 		idx1 = (i / n) * (2 * n) + (i % n);
@@ -165,12 +221,14 @@ __global__ void MergeSortedArray(uint * num)
 
 int main()
 {
-	srand(time(NULL));
+	std::random_device device;
+    std::mt19937 generator(device());
+    std::uniform_int_distribution<uint> distribution(1, UINT_MAX);
 
 	// create cpu buffer
-	uint numCount = 256;
+	uint numCount = 512;
 	uint* h_num = new uint[numCount];
-	for (uint i = 0; i < numCount; ++i) { h_num[i] = rand() % (uint)pow(2, 8); }
+	for (uint i = 0; i < numCount; ++i) { h_num[i] = distribution(generator); }
 
 	std::cout << "input:\n";
 	for (uint i = 0; i < numCount; ++i)
@@ -192,9 +250,9 @@ int main()
 	GpuErrorCheck(cudaDeviceSynchronize());
 	GpuErrorCheck(cudaPeekAtLastError());
 
-	//MergeSortedArray <<<DivRound(numCount, 512), 256>>> (d_num);
-	//GpuErrorCheck(cudaDeviceSynchronize());
-	//GpuErrorCheck(cudaPeekAtLastError());
+	MergeSortedArray <<<DivRound(numCount, 512), 256>>> (d_num);
+	GpuErrorCheck(cudaDeviceSynchronize());
+	GpuErrorCheck(cudaPeekAtLastError());
 
 	// copy from gpu to cpu
 	GpuErrorCheck(cudaMemcpy(h_num, d_num, numCount * sizeof(uint), cudaMemcpyDeviceToHost));
