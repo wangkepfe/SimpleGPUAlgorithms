@@ -225,8 +225,14 @@ __global__ void MaxMinIdxmaxDLP(int* data, int* outMax, int* outMin, Int2* outId
 	int omax, oidx_x, oidx_y;
 	max_idxmax_1x3(omax, oidx_x, oidx_y, upmax, middlemax, downmax, up_idx_x, middle_idx_x, down_idx_x);
 
+	// data
+	v_1 = __shfl_sync(0xffffffff, middleup, laneId + 8);
+	v_2 = __shfl_sync(0xffffffff, middledown, laneId & 0x7);
+	int middle = (threadIdx.y < 3) ? v_1 : v_2; // row [0:3] = [0:3] middle
+
 	// ----------------------- out -------------------------
 
+	data[x + y * w] = middle;
 	outMax[x + y * w] = omax;
 	outMin[x + y * w] = omin;
 	outIdxMax[x + y * w] = Int2(oidx_x, oidx_y);
@@ -279,19 +285,34 @@ int main()
 	GpuErrorCheck(cudaPeekAtLastError());
 
 	// copy to cpu
+	int* h_datamin = new int[numCount];
 	int* h_datamax = new int[numCount];
 	Int2* h_dataidx = new Int2[numCount];
-	GpuErrorCheck(cudaMemcpy(h_data, d_outMin, numCount * sizeof(int), cudaMemcpyDeviceToHost));
-	GpuErrorCheck(cudaMemcpy(h_datamax, d_outMax, numCount * sizeof(int), cudaMemcpyDeviceToHost));
+	GpuErrorCheck(cudaMemcpy(h_data,    d_data,      numCount * sizeof(int), cudaMemcpyDeviceToHost));
+	GpuErrorCheck(cudaMemcpy(h_datamin, d_outMin,    numCount * sizeof(int), cudaMemcpyDeviceToHost));
+	GpuErrorCheck(cudaMemcpy(h_datamax, d_outMax,    numCount * sizeof(int), cudaMemcpyDeviceToHost));
 	GpuErrorCheck(cudaMemcpy(h_dataidx, d_outIdxMax, numCount * sizeof(Int2), cudaMemcpyDeviceToHost));
 
 	// print processed
-	std::cout << "min:\n";
+	std::cout << "data:\n";
 	for (int i = 0; i < h; ++i)
 	{
 		for (int j = 0; j < w; ++j)
 		{
 			std::cout << std::setw(3) << std::left << h_data[i * w + j] << ",";
+			if (j % 8 == 7) std::cout << "   ,";
+		}
+		std::cout << "\n";
+		if (i % 8 == 7) std::cout << "\n";
+	}
+	std::cout << "\n\n";
+
+	std::cout << "min:\n";
+	for (int i = 0; i < h; ++i)
+	{
+		for (int j = 0; j < w; ++j)
+		{
+			std::cout << std::setw(3) << std::left << h_datamin[i * w + j] << ",";
 			if (j % 8 == 7) std::cout << "   ,";
 		}
 		std::cout << "\n";
@@ -328,6 +349,7 @@ int main()
 	delete h_data;
 	delete h_datamax;
 	delete h_dataidx;
+	delete h_datamin;
 	cudaFree(d_data);
 	cudaFree(d_outMin);
 	cudaFree(d_outMax);
