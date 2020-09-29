@@ -29,6 +29,7 @@ inline void GpuAssert(cudaError_t code, const char* file, int line, bool abort =
 //#define IS_DEBUG_PIXEL idx.x == gridDim.x * blockDim.x * 0.5 && idx.y == gridDim.y * blockDim.y * 0.5
 //#define IS_DEBUG_PIXEL idx.x == 1152 && idx.y == 277
 #define IS_DEBUG_PIXEL 0
+//#define IS_DEBUG_PIXEL threadIdx.x == 0
 
 __device__ void Print(const char* name) { printf("%\n", name); }
 __device__ void Print(const char* name, const int& n) { printf("%s = %d\n", name, n); }
@@ -521,11 +522,11 @@ __global__ void RenderTriangle(Float3* frameBuffer, Triangle* triangles, BVHNode
 	int currIdx = 0;
 	int isCurrLeaf = 0;
 
-	while(1)
+	for (int i = 0; i < 256; ++i)
 	{
 		if (IS_DEBUG_PIXEL)
 		{
-			Print("i", i);
+			//Print("i", i);
 			Print("stackTop", stackTop);
 			Print("isCurrLeaf", isCurrLeaf);
 			Print("currIdx", currIdx);
@@ -652,7 +653,7 @@ __global__ void RenderTriangle(Float3* frameBuffer, Triangle* triangles, BVHNode
 #endif
 	frameBuffer[pixelIdx] = (iHit != -1) ? Float3(uCurr, vCurr, 0) : Float3(0, 0, 1);
 }
-
+#if 0
 __device__ __forceinline__ int RingIncrease(int& idx)
 {
 	int size = 64;
@@ -805,7 +806,7 @@ __global__ void RenderBVH(Float3* frameBuffer, Triangle* triangles, AABB* aabbs,
 
 	frameBuffer[zslice * 2560 * 1440 + pixelIdx] = (iHit != -1) ? (triangleHit ? Float3(uCurr, vCurr, 0) : Float3(randGen.Rand(iHit, 0, 0), randGen.Rand(iHit, 1, 0), randGen.Rand(iHit, 2, 0))) : Float3(0);
 }
-
+#endif
 inline float clamp(float x) { return x < 0.0f ? 0.0f : x > 1.0f ? 1.0f : x; }
 inline int pixelToInt(float x) { return int(pow(clamp(x), 1 / 2.2) * 255 + .5); }
 void writeToPPM(const char* fname, int width, int height, Float3* accuBuffer, unsigned int frameNum)
@@ -835,12 +836,11 @@ __inline__ __device__ void WarpReduceMaxMin3f(Float3& vmax, Float3& vmin) {
 	}
 }
 
-template<int ldsSize>
+template<uint lds_size>
 __global__ void UpdateSceneGeometry(Triangle* triangles, AABB* aabbs, AABB* sceneBoundingBox, uint* morton, unsigned int triCount)
 {
-	int idx = blockDim.x * blockIdx.x + threadIdx.x;
-	uint laneId = threadIdx.x & 0x1f;
-	uint warpId = (threadIdx.x & 0xffffffe0) >> 5u;
+	uint idx = threadIdx.x;
+	if (idx > triCount - 1) return;
 
 	// ------------------------------------ update triangle position ------------------------------------
 	// a line
@@ -850,17 +850,18 @@ __global__ void UpdateSceneGeometry(Triangle* triangles, AABB* aabbs, AABB* scen
 	// Float3 v1 = lineStart + lineStep * idx;
 
 	// a plane
-	uint idxx = idx / 8;
-	uint idxy = idx % 8;
+	uint edgeLen = (uint)sqrtf((float)triCount);
+	uint idxx = idx / edgeLen;
+	uint idxy = idx % edgeLen;
 	Float3 startPos = {-3, 0, 8 };
 	Float3 endPos1 = {-3, 8, 38 };
 	Float3 endPos2 = {3, 0, 8 };
-	Float3 lineStep1 = (endPos1 - startPos) / (float)triCount * 8;
-	Float3 lineStep2 = (endPos2 - startPos) / (float)triCount * 8;
+	Float3 lineStep1 = (endPos1 - startPos) / (float)edgeLen;
+	Float3 lineStep2 = (endPos2 - startPos) / (float)edgeLen;
 	Float3 v1 = startPos + lineStep1 * idxx + lineStep2 * idxy;
 
-	Float3 v2Offset = {-0.5, -0.5, 0};
-	Float3 v3Offset = {0, -0.5, 0};
+	Float3 v2Offset = {-0.125, -0.125, 0};
+	Float3 v3Offset = {0, -0.125, 0};
 	Float3 v2 = v1 + v2Offset;
 	Float3 v3 = v1 + v3Offset;
 
@@ -881,18 +882,52 @@ __global__ void UpdateSceneGeometry(Triangle* triangles, AABB* aabbs, AABB* scen
 	diff = max3f(Float3(0.001f), diff);
 	aabbmax = aabbmin + diff;
 
-	aabbs[idx].min = aabbmin;
-	aabbs[idx].max = aabbmax;
-
+	AABB currentAABB = AABB(aabbmax, aabbmin);
+	aabbs[idx] = currentAABB;
 	Float3 aabbcenter = (aabbmax + aabbmin) / 2.0f;
 
 	// ------------------------------------ reduce for scene bounding box ------------------------------------
-	__shared__ AABB lds[ldsSize];
+	AABB sceneAabb;
 
-	if (idx < ldsSize)
+#if 1
+	__shared__ AABB lds[lds_size];
+	lds[idx] = currentAABB;
+	__syncthreads();
+
+	#pragma unroll
+	for (uint stride = 512; stride >= 64; stride >>= 1)
 	{
-		lds[idx] = AABB(Float3(FLT_MIN), Float3(FLT_MAX));
+		if (lds_size > stride && idx < stride && idx + stride < triCount)
+		{
+			lds[idx].min = min3f(lds[idx].min, lds[idx + stride].min);
+			lds[idx].max = max3f(lds[idx].max, lds[idx + stride].max);
+		}
+		__syncthreads();
 	}
+
+	if (idx < 32)
+	{
+		lds[idx].min = min3f(lds[idx].min, lds[idx + 32].min);
+		lds[idx].max = max3f(lds[idx].max, lds[idx + 32].max);
+
+		WarpReduceMaxMin3f(lds[idx].max, lds[idx].min);
+	}
+	__syncthreads();
+
+	sceneAabb = lds[0];
+
+	if (idx == 0)
+	{
+		sceneBoundingBox[0] = lds[0];
+	}
+	__syncthreads();
+#else
+	uint laneId = threadIdx.x & 0x1f;
+	uint warpId = (threadIdx.x & 0xffffffe0) >> 5u;
+
+	__shared__ AABB lds[256];
+
+	lds[idx] = AABB(Float3(FLT_MIN), Float3(FLT_MAX));
 	__syncthreads();
 
 	Float3 aabbmintemp = aabbmin;
@@ -908,9 +943,6 @@ __global__ void UpdateSceneGeometry(Triangle* triangles, AABB* aabbs, AABB* scen
 	}
 	__syncthreads();
 
-	//#pragma unroll
-	//for (int activeWarpCount = triCount / 32; activeWarpCount > 1; activeWarpCount = (activeWarpCount + 31) / 32)
-	//{
 	if (warpId < ((triCount / 32) + 31) / 32)
 	{
 		// read
@@ -927,16 +959,15 @@ __global__ void UpdateSceneGeometry(Triangle* triangles, AABB* aabbs, AABB* scen
 		}
 	}
 	__syncthreads();
-	//}
 
-	AABB sceneAabb = lds[0];
+	sceneAabb = lds[0];
 
 	if (idx == 0)
 	{
 		sceneBoundingBox[0] = sceneAabb;
 	}
 	__syncthreads();
-
+#endif
 	// ------------------------------------ assign morton code to aabb ------------------------------------
 	Float3 unitBox = (aabbcenter - sceneAabb.min) / (sceneAabb.max - sceneAabb.min);
 
@@ -961,26 +992,144 @@ __global__ void UpdateSceneGeometry(Triangle* triangles, AABB* aabbs, AABB* scen
 	// }
 }
 
+template<typename T>
+__device__ __forceinline__ void ReduceAddToRightVec(volatile T* buffer, uint i, uint n, uint vecIdx, uint vecLen, uint& step, uint& stepBit, bool canReadWrite)
+{
+	stepBit = 1;
+	step = 1;
+	if (IS_DEBUG_PIXEL)
+	{
+		printf("original buffer = (");
+		for (int d = 0; d < 32; d += 16)
+		{
+			printf("%d, ", buffer[d]);
+		}
+		printf(")\n");
+	}
+	#pragma unroll
+	while (step < n)
+	{
+		if (canReadWrite && i < (n >> stepBit))
+		{
+			uint idxR = n - 1 - 2 * i * step;
+			uint idxL = idxR - step;
+
+			idxR = idxR * vecLen + vecIdx;
+			idxL = idxL * vecLen + vecIdx;
+
+			buffer[idxR] += buffer[idxL];
+		}
+		__syncthreads();
+
+		if (IS_DEBUG_PIXEL)
+		{
+			printf("ReduceAddToRightVec: step = %d, buffer = (", step);
+			for (int d = 0; d < 32; d += 16)
+			{
+				printf("%d, ", buffer[d]);
+			}
+			printf(")\n");
+		}
+
+		step <<= 1;
+		++stepBit;
+	}
+	step >>= 1;
+	--stepBit;
+}
+
+template<typename T>
+__device__ __forceinline__ void ClearAndRecordSumVec(volatile T* buffer, volatile T* recordBuffer, uint i, uint n, uint vecIdx, uint vecLen, bool canReadWrite)
+{
+	if (canReadWrite && i == (n >> 1) - 1)
+	{
+		uint lastIdx = (n - 1) * vecLen + vecIdx;
+		T sum = buffer[lastIdx];
+		buffer[lastIdx] = 0;
+		recordBuffer[vecIdx] = sum;
+	}
+	__syncthreads();
+
+	if (IS_DEBUG_PIXEL)
+	{
+		printf("ClearAndRecordSumVec: buffer = (");
+		for (int d = 0; d < 32; d += 16)
+		{
+			printf("%d, ", buffer[d]);
+		}
+		printf(")\n");
+	}
+}
+
+template<typename T>
+__device__ __forceinline__ void ScanOnReducedVec(volatile T* buffer, uint i, uint n, uint vecIdx, uint vecLen, uint& step, uint& stepBit, bool canReadWrite)
+{
+	#pragma unroll
+	while (step >= 1)
+	{
+		if (canReadWrite && i < (n >> stepBit))
+		{
+			uint idxR = n - 1 - 2 * i * step;
+			uint idxL = idxR - step;
+
+			idxR = idxR * vecLen + vecIdx;
+			idxL = idxL * vecLen + vecIdx;
+
+			T left = buffer[idxL];
+			T right = buffer[idxR];
+
+			buffer[idxL] = right;
+			buffer[idxR] = left + right;
+		}
+		__syncthreads();
+		if (IS_DEBUG_PIXEL)
+		{
+			printf("ScanOnReducedVec: step = %d, buffer = (", step);
+			for (int d = 0; d < 32; d += 16)
+			{
+				printf("%d, ", buffer[d]);
+			}
+			printf(")\n\n");
+		}
+		step >>= 1;
+		--stepBit;
+	}
+}
+
+template<typename T>
+__device__ __forceinline__ void InclusiveScan16(T& v, uint laneId)
+{
+	T v1 = __shfl_sync(0xffffffff, v, laneId - 1); v = v1;
+	if (laneId == 0) { v = 0; }
+
+	v1 = __shfl_sync(0xffffffff, v, laneId - 1); if (laneId > 0) { v += v1; }
+	v1 = __shfl_sync(0xffffffff, v, laneId - 2); if (laneId > 1) { v += v1; }
+	v1 = __shfl_sync(0xffffffff, v, laneId - 4); if (laneId > 3) { v += v1; }
+	v1 = __shfl_sync(0xffffffff, v, laneId - 8); if (laneId > 7) { v += v1; }
+}
+
+template<uint lds_size>
 __global__ void RadixSort(uint* inout, uint* reorderIdx)
 {
 	struct LDS
 	{
-		uint tempIdx[256];
-		uint temp[256];
-		ushort histo[16 * 8];
-		ushort histoScan[16];
+		uint tempIdx[lds_size];
+		uint temp[lds_size];
+		ushort histo[16 * (lds_size / 32)]; // 16 values per warp
+		ushort histoScan[16]; // 16 in total
 	};
 
-	__shared__ LDS lds;
+	volatile __shared__ LDS lds;
 	lds.tempIdx[threadIdx.x] = threadIdx.x;
 
 	//------------------------------------ Read data in ----------------------------------------
-    lds.temp[threadIdx.x] = inout[blockIdx.x * blockDim.x + threadIdx.x];
+    lds.temp[threadIdx.x] = inout[threadIdx.x];
 	__syncthreads();
 
 	// lane id and warp id
 	uint laneId = threadIdx.x & 0x1f;
 	uint warpId = (threadIdx.x & 0xffffffe0) >> 5u;
+	uint warpCount = lds_size >> 5u;
 
 	// loop for each 4 bits
 	#pragma unroll
@@ -997,7 +1146,7 @@ __global__ void RadixSort(uint* inout, uint* reorderIdx)
 		if (warpId == 0 && laneId < 16) { lds.histoScan[laneId] = 0; }
 		__syncthreads();
 
-		//------------------------------------ Warp count and offset ----------------------------------------
+		//------------------------------------ Warp count and offset, by polling for same number to the current thread ----------------------------------------
 
 		// mask indicates threads having equal value number with current thread
 		uint mask = 0xffffffff;
@@ -1014,7 +1163,37 @@ __global__ void RadixSort(uint* inout, uint* reorderIdx)
 
 		// count of current value number
 		uint count = __popc(mask);
+#if 1
+		//------------------------------------ Scan across the warps, each has 16 values for number count within a warp ----------------------------------------
 
+		if (pos == 1) { lds.histo[warpId * 16 + num4bit] = count; }
+		__syncthreads();
+
+		bool canReadWrite = (laneId < 16 && warpId < (warpCount / 2));
+
+		uint stepBit, step;
+		ReduceAddToRightVec(lds.histo, warpId, warpCount, laneId, 16, step, stepBit, canReadWrite);
+
+		ClearAndRecordSumVec(lds.histo, lds.histoScan, warpId, warpCount, laneId, 16, canReadWrite);
+
+		ScanOnReducedVec(lds.histo, warpId, warpCount, laneId, 16, step, stepBit, canReadWrite);
+
+		//------------------------------------ Scan 16 values for total count of 16 numbers ----------------------------------------
+		if (warpId == (warpCount >> 1) - 1)
+		{
+			uint v = (laneId < 16) ? lds.histoScan[laneId] : 0;
+			InclusiveScan16(v, laneId);
+			if (laneId < 16) { lds.histoScan[laneId] = v; }
+		}
+		__syncthreads();
+
+		//------------------------------------ Reorder ----------------------------------------
+		uint idxAllNum          = lds.histoScan[num4bit];
+		uint idxCurrentNumBlock = lds.histo[warpId * 16 + num4bit];
+		uint idxCurrentNumWarp  = pos - 1;
+
+		uint finalIdx = idxAllNum + idxCurrentNumBlock + idxCurrentNumWarp;
+#else
 		//------------------------------------ Block count and offset ----------------------------------------
 
 		// Re-arrange data for warp level scan
@@ -1057,20 +1236,23 @@ __global__ void RadixSort(uint* inout, uint* reorderIdx)
 		uint idxAllNum          = lds.histoScan[num4bit];
 		uint idxCurrentNumBlock = (warpId > 0) ? lds.histo[(warpId - 1) * 16 + num4bit] : 0;
 		uint idxCurrentNumWarp  = pos - 1;
-		uint finalIdx = idxAllNum + idxCurrentNumBlock + idxCurrentNumWarp;
 
+		uint finalIdx = idxAllNum + idxCurrentNumBlock + idxCurrentNumWarp;
+#endif
+
+		// write num
 		lds.temp[finalIdx] = num;
 
+		// read & write reorderIdx
 		uint currentReorderIdx = lds.tempIdx[threadIdx.x];
 		__syncthreads();
-
 		lds.tempIdx[finalIdx] = currentReorderIdx;
 		__syncthreads();
 	}
 
 	//------------------------------------ Write out ----------------------------------------
-	inout[blockIdx.x * blockDim.x + threadIdx.x] = lds.temp[threadIdx.x];
-	reorderIdx[blockIdx.x * blockDim.x + threadIdx.x] = lds.tempIdx[threadIdx.x];
+	inout[threadIdx.x] = lds.temp[threadIdx.x];
+	reorderIdx[threadIdx.x] = lds.tempIdx[threadIdx.x];
 }
 
 __device__ __inline__ int LCP(uint* morton, uint triCount, int m0, int j)
@@ -1081,7 +1263,7 @@ __device__ __inline__ int LCP(uint* morton, uint triCount, int m0, int j)
 	return res;
 }
 
-__global__ void BuildLBVH (BVHNode* bvhNodes, AABB* aabbs, uint* morton, uint* reorderIdx, uint* bvhNodeParent, uint* isAabbDone, uint triCount)
+__global__ void BuildLBVH (BVHNode* bvhNodes, AABB* aabbs, uint* morton, uint* reorderIdx,/* uint* bvhNodeParent,*/ uint* isAabbDone, uint triCount)
 {
 	uint i = blockIdx.x * blockDim.x + threadIdx.x;
 	if (i >= triCount - 1) { return; }
@@ -1116,12 +1298,16 @@ __global__ void BuildLBVH (BVHNode* bvhNodes, AABB* aabbs, uint* morton, uint* r
 	// Find the split position using binary search
 	int deltaNode = LCP(morton, triCount, m0, j);
 	int s = 0;
-	for (int div = 2, int t = (l + div - 1) / div; t >= 1; div *= 2, t = (l + div - 1) / div)
+	int div = 2;
+	int t = (l + div - 1) / div;
+	while (t >= 1)
 	{
 		if (LCP(morton, triCount, m0, i + (s + t) * d) > deltaNode)
 		{
 			s += t;
 		}
+		div *= 2;
+		t = (l + div - 1) / div;
 	}
 	int gamma = i + s * d + min(d, 0);
 
@@ -1135,7 +1321,7 @@ __global__ void BuildLBVH (BVHNode* bvhNodes, AABB* aabbs, uint* morton, uint* r
 	{
 		bvhNodes[i].isLeftLeaf = 0;
 		bvhNodes[i].idxLeft = gamma;
-		bvhNodeParent[gamma] = i;
+		//bvhNodeParent[gamma] = i;
 	}
 
 	if (max(i, j) == gamma + 1)
@@ -1147,7 +1333,7 @@ __global__ void BuildLBVH (BVHNode* bvhNodes, AABB* aabbs, uint* morton, uint* r
 	{
 		bvhNodes[i].isRightLeaf = 0;
 		bvhNodes[i].idxRight = gamma + 1;
-		bvhNodeParent[gamma + 1] = i;
+		//bvhNodeParent[gamma + 1] = i;
 	}
 	//-------------------------------------------------------------------------------------------------------------------------
 
@@ -1182,7 +1368,9 @@ int main()
 	GpuErrorCheck(cudaMalloc((void**) &frameBuffer, 2560 * 1440 * 1 * sizeof(Float3)));
 	GpuErrorCheck(cudaMemset(frameBuffer, 0, 2560 * 1440 * 1 * sizeof(Float3)));
 
-	const unsigned int triCount = 64;
+	const uint triCount = 900;
+	const uint capacity = 1024;
+
 	Triangle* triangles;
 	GpuErrorCheck(cudaMalloc((void**) &triangles, triCount * sizeof(Triangle)));
 
@@ -1193,99 +1381,79 @@ int main()
 	GpuErrorCheck(cudaMalloc((void**) &sceneBoundingBox, sizeof(AABB)));
 
 	uint* morton;
-	GpuErrorCheck(cudaMalloc((void**)& morton, 256 * sizeof(uint)));
-	GpuErrorCheck(cudaMemset(morton, UINT_MAX, 256 * sizeof(uint)));
+	GpuErrorCheck(cudaMalloc((void**)& morton, capacity * sizeof(uint)));
+	GpuErrorCheck(cudaMemset(morton, UINT_MAX, capacity * sizeof(uint)));
 
 	uint* reorderIdx;
-	GpuErrorCheck(cudaMalloc((void**)& reorderIdx, 256 * sizeof(uint)));
+	GpuErrorCheck(cudaMalloc((void**)& reorderIdx, capacity * sizeof(uint)));
 
 	BVHNode* bvhNodes;
 	uint* bvhNodeParent;
 	uint* isAabbDone;
 	GpuErrorCheck(cudaMalloc((void**)& bvhNodes, (triCount - 1) * sizeof(BVHNode)));
-	GpuErrorCheck(cudaMalloc((void**)& bvhNodeParent, (triCount - 1) * sizeof(uint)));
+	//GpuErrorCheck(cudaMalloc((void**)& bvhNodeParent, (triCount - 1) * sizeof(uint)));
 	GpuErrorCheck(cudaMalloc((void**)& isAabbDone, (triCount - 1) * sizeof(uint)));
 	GpuErrorCheck(cudaMemset(isAabbDone, 0, (triCount - 1) * sizeof(uint)));
 
-// ------------------------------- Update Geometry -----------------------------------
-// out: triangles
-//      aabbs
-//      morton codes
-#if CREATE_TRIANGLE_HOST
-	Triangle* trianglesHost = new Triangle[triCount];
-
-	for (int i = 0; i < triCount; ++i)
-	{
-		trianglesHost[i].v1 = lineStart + lineStep * i;
-		trianglesHost[i].v2 = trianglesHost[i].v1 + v2Offset;
-		trianglesHost[i].v3 = trianglesHost[i].v1 + v3Offset;
-
-#if RAY_TRIANGLE_COORDINATE_TRANSFORM
-		PreCalcTriangleCoordTrans(trianglesHost[i]);
-#endif
-	}
-	GpuErrorCheck(cudaMemcpy(triangles, trianglesHost, triCount * sizeof(Triangle), cudaMemcpyHostToDevice));
-#else
-	int warpCount = triCount / 32;
-	int ldsSize = ((warpCount + 31) / 32) * 32;
-	switch (ldsSize)
-	{
-		case 32: UpdateSceneGeometry <32> <<< 1, 64, 32 * sizeof(AABB) >>> (triangles, aabbs, sceneBoundingBox, morton, triCount);
-	}
-#endif
+	// ------------------------------- Update Geometry -----------------------------------
+	// out: triangles
+	//      aabbs
+	//      morton codes
+	UpdateSceneGeometry <triCount> <<< 1, triCount >>> (triangles, aabbs, sceneBoundingBox, morton, triCount);
 
 	GpuErrorCheck(cudaDeviceSynchronize());
 	GpuErrorCheck(cudaPeekAtLastError());
-
+#if 0
 	AABB sceneBoundingBoxHost;
 	GpuErrorCheck(cudaMemcpy(&sceneBoundingBoxHost, sceneBoundingBox, sizeof(AABB), cudaMemcpyDeviceToHost));
 	std::cout << "max = (" << sceneBoundingBoxHost.max.x << "," << sceneBoundingBoxHost.max.y << "," << sceneBoundingBoxHost.max.z << ")\n"
 			  << "min = (" << sceneBoundingBoxHost.min.x << "," << sceneBoundingBoxHost.min.y << "," << sceneBoundingBoxHost.min.z << ")\n";
-
-	uint mortonHost[64];
-	GpuErrorCheck(cudaMemcpy(&mortonHost, morton, 64 * sizeof(uint), cudaMemcpyDeviceToHost));
-	for (int i = 0; i < 64; ++i) { std::cout << mortonHost[i] << " "; }
+	uint mortonHost[triCount];
+	GpuErrorCheck(cudaMemcpy(&mortonHost, morton, triCount * sizeof(uint), cudaMemcpyDeviceToHost));
+	for (int i = 0; i < triCount; ++i) { std::cout << mortonHost[i] << " "; }
 	std::cout << "\n\n\n";
-
+#endif
 	// ------------------------------- Radix Sort -----------------------------------
 	// in: morton code
 	// out: reorder idx
-	RadixSort <<< 1, 256 >>> (morton, reorderIdx);
+	RadixSort <capacity> <<< 1, capacity >>> (morton, reorderIdx);
 
 	GpuErrorCheck(cudaDeviceSynchronize());
 	GpuErrorCheck(cudaPeekAtLastError());
-
-	GpuErrorCheck(cudaMemcpy(&mortonHost, morton, 64 * sizeof(uint), cudaMemcpyDeviceToHost));
-	for (int i = 0; i < 64; ++i) { std::cout << mortonHost[i] << " "; }
+#if 0
+	GpuErrorCheck(cudaMemcpy(&mortonHost, morton, triCount * sizeof(uint), cudaMemcpyDeviceToHost));
+	for (int i = 0; i < triCount; ++i) { std::cout << mortonHost[i] << " "; }
 	std::cout << "\n\n\n";
-
-	uint reorderIdxHost[64];
-	GpuErrorCheck(cudaMemcpy(&reorderIdxHost, reorderIdx, 64 * sizeof(uint), cudaMemcpyDeviceToHost));
-	for (int i = 0; i < 64; ++i) { std::cout << reorderIdxHost[i] << " "; }
+	uint reorderIdxHost[triCount];
+	GpuErrorCheck(cudaMemcpy(&reorderIdxHost, reorderIdx, triCount * sizeof(uint), cudaMemcpyDeviceToHost));
+	for (int i = 0; i < triCount; ++i) { std::cout << reorderIdxHost[i] << " "; }
 	std::cout << "\n\n\n";
-
+#endif
 	// ------------------------------- Build LBVH -----------------------------------
 	// in: aabbs
 	//     morton code
 	//     reorder idx
 	// out: lbvh
-	BuildLBVH <<< 1 , 64 >>> (bvhNodes, aabbs, morton, reorderIdx, bvhNodeParent, isAabbDone, triCount);
+	BuildLBVH <<< 1 , triCount >>> (bvhNodes, aabbs, morton, reorderIdx, /*bvhNodeParent,*/ isAabbDone, triCount);
 
 	GpuErrorCheck(cudaDeviceSynchronize());
 	GpuErrorCheck(cudaPeekAtLastError());
-
+#if 0
 	AABBCompact sceneBoundingBoxHost2compact;
 	GpuErrorCheck(cudaMemcpy(&sceneBoundingBoxHost2compact, bvhNodes, sizeof(AABBCompact), cudaMemcpyDeviceToHost));
 	AABB sceneBoundingBoxHost2 = sceneBoundingBoxHost2compact.GetMerged();
 	std::cout << "max = (" << sceneBoundingBoxHost2.max.x << "," << sceneBoundingBoxHost2.max.y << "," << sceneBoundingBoxHost2.max.z << ")\n"
 			  << "min = (" << sceneBoundingBoxHost2.min.x << "," << sceneBoundingBoxHost2.min.y << "," << sceneBoundingBoxHost2.min.z << ")\n";
-
+#endif
 	// ------------------------------- Rendering -----------------------------------
 	RenderTriangle <<< dim3(2560/8, 1440/8, 1), dim3(8, 8, 1) >>> (frameBuffer, triangles, bvhNodes, camera, randGen);
-	// RenderBVH <<< dim3(2560/8, 1440/8, 16), dim3(8, 8, 1) >>> (frameBuffer, triangles, aabbs, bvhNodes, reorderIdx, camera, randGen);
 
-	// GpuErrorCheck(cudaDeviceSynchronize());
-	// GpuErrorCheck(cudaPeekAtLastError());
+#if 0
+	RenderBVH <<< dim3(2560/8, 1440/8, 16), dim3(8, 8, 1) >>> (frameBuffer, triangles, aabbs, bvhNodes, reorderIdx, camera, randGen);
+#endif
+
+	GpuErrorCheck(cudaDeviceSynchronize());
+	GpuErrorCheck(cudaPeekAtLastError());
 
 	Float3* frameBufferHost = new Float3[2560 * 1440 * 1 * sizeof(Float3)];
 	GpuErrorCheck(cudaMemcpy(frameBufferHost, frameBuffer, 2560 * 1440 * 1 * sizeof(Float3), cudaMemcpyDeviceToHost));
@@ -1296,6 +1464,8 @@ int main()
 		writeToPPM(name.c_str(), 2560, 1440, frameBufferHost + i * 2560 * 1440, 1);
 	}
 
+	delete frameBufferHost;
+
 	cudaFree(frameBuffer);
 	cudaFree(triangles);
 	cudaFree(aabbs);
@@ -1305,8 +1475,6 @@ int main()
 	cudaFree(bvhNodes);
 	cudaFree(bvhNodeParent);
 	cudaFree(isAabbDone);
-
-	delete frameBufferHost;
 
 	randGen_h.clear();
 

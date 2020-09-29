@@ -305,7 +305,7 @@ __global__ void prefixScanV4(int* num, int count)
 	if (idx1 < count) num[idx1] += lds[blockIdx.x];
 	if (idx2 < count) num[idx2] += lds[blockIdx.x];
 }
-
+#endif
 template<int n>
 __global__ void prefixScanV5_block(volatile int* num, volatile int* num2, int count)
 {
@@ -359,7 +359,7 @@ __global__ void prefixScanV5_block(volatile int* num, volatile int* num2, int co
 	if (idx1 < count) num[idx1] = lds[i * 2];
 	if (idx2 < count) num[idx2] = lds[i * 2 + 1];
 }
-
+#if 0
 template<int n>
 __global__ void prefixScanV5_grid(volatile int* num, int count)
 {
