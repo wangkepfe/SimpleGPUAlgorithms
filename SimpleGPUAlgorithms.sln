@@ -21,6 +21,8 @@ Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "ImageSampler", "ImageSample
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "LBVH", "LBVH\LBVH.vcxproj", "{A67F1AF7-E0C8-4CDD-B20F-97ECF99D1511}"
 EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "Filtering", "Filtering\Filtering.vcxproj", "{02CB34F6-66AA-4791-AE4B-F2C07BE5659F}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|x64 = Debug|x64
@@ -89,6 +91,12 @@ Global
 		{A67F1AF7-E0C8-4CDD-B20F-97ECF99D1511}.Release|x64.ActiveCfg = Release|x64
 		{A67F1AF7-E0C8-4CDD-B20F-97ECF99D1511}.Release|x64.Build.0 = Release|x64
 		{A67F1AF7-E0C8-4CDD-B20F-97ECF99D1511}.Release|x86.ActiveCfg = Release|x64
+		{02CB34F6-66AA-4791-AE4B-F2C07BE5659F}.Debug|x64.ActiveCfg = Debug|x64
+		{02CB34F6-66AA-4791-AE4B-F2C07BE5659F}.Debug|x64.Build.0 = Debug|x64
+		{02CB34F6-66AA-4791-AE4B-F2C07BE5659F}.Debug|x86.ActiveCfg = Debug|x64
+		{02CB34F6-66AA-4791-AE4B-F2C07BE5659F}.Release|x64.ActiveCfg = Release|x64
+		{02CB34F6-66AA-4791-AE4B-F2C07BE5659F}.Release|x64.Build.0 = Release|x64
+		{02CB34F6-66AA-4791-AE4B-F2C07BE5659F}.Release|x86.ActiveCfg = Release|x64
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
