@@ -4,9 +4,10 @@ import diskSampler
 import poissonSampler
 import diskSampler
 import halton
+import goldenRatio
 
 an = np.linspace(0, 2 * np.pi, 100)
-fig, axs = plt.subplots(3, 4)
+fig, axs = plt.subplots(3, 7)
 
 # ---------------------------------------- Concentric disk sampling 16 ----------------------------------------
 
@@ -134,8 +135,7 @@ axs[2, 2].set_title('Poisson disk sampling\nsample count = ' + str(len(poissonsa
 for point in poissonsamples:
     axs[2, 2].scatter(point[0], point[1])
 
-
-# ---------------------------------------- Poisson disk sampling 16 ----------------------------------------
+# ---------------------------------------- halton concentric disk sampling 16 ----------------------------------------
 haltonSamples = diskSampler.get_halton_concentric_samples(16)
 haltonSamples *= 4.5
 
@@ -146,7 +146,7 @@ axs[0, 3].set_title('Halton concentric disk sampling\nsample count = ' + str(len
 for point in haltonSamples:
     axs[0, 3].scatter(point[0], point[1])
 
-# ---------------------------------------- Poisson disk sampling 12 ----------------------------------------
+# ---------------------------------------- halton concentric disk sampling 12 ----------------------------------------
 haltonSamples = diskSampler.get_halton_concentric_samples(12)
 haltonSamples *= 4.5
 axs[1, 3].plot(5 *np.cos(an), 5 *np.sin(an))
@@ -155,7 +155,7 @@ axs[1, 3].set_title('Halton concentric disk sampling\nsample count = ' + str(len
 for point in haltonSamples:
     axs[1, 3].scatter(point[0], point[1])
 
-# ---------------------------------------- Poisson disk sampling 9 ----------------------------------------
+# ---------------------------------------- halton concentric disk sampling 9 ----------------------------------------
 haltonSamples = diskSampler.get_halton_concentric_samples(9)
 haltonSamples *= 4.5
 axs[2, 3].plot(5 *np.cos(an), 5 *np.sin(an))
@@ -163,6 +163,87 @@ axs[2, 3].set_aspect('equal', 'box')
 axs[2, 3].set_title('Halton concentric disk sampling\nsample count = ' + str(len(haltonSamples)), fontsize=10)
 for point in haltonSamples:
     axs[2, 3].scatter(point[0], point[1])
+
+# ---------------------------------------- sobol concentric disk sampling 16 ----------------------------------------
+haltonSamples = diskSampler.get_sobol_concentric_samples(16)
+haltonSamples *= 4.5
+axs[0, 4].plot(5 *np.cos(an), 5 *np.sin(an))
+axs[0, 4].set_aspect('equal', 'box')
+axs[0, 4].set_title('Sobol concentric disk sampling\nsample count = ' + str(len(haltonSamples)), fontsize=10)
+for point in haltonSamples:
+    axs[0, 4].scatter(point[0], point[1])
+
+# ---------------------------------------- sobol concentric disk sampling 12 ----------------------------------------
+haltonSamples = diskSampler.get_sobol_concentric_samples(12)
+haltonSamples *= 4.5
+axs[1, 4].plot(5 *np.cos(an), 5 *np.sin(an))
+axs[1, 4].set_aspect('equal', 'box')
+axs[1, 4].set_title('Sobol concentric disk sampling\nsample count = ' + str(len(haltonSamples)), fontsize=10)
+for point in haltonSamples:
+    axs[1, 4].scatter(point[0], point[1])
+
+# ---------------------------------------- sobol concentric disk sampling 9 ----------------------------------------
+haltonSamples = diskSampler.get_sobol_concentric_samples(9)
+haltonSamples *= 4.5
+axs[2, 4].plot(5 *np.cos(an), 5 *np.sin(an))
+axs[2, 4].set_aspect('equal', 'box')
+axs[2, 4].set_title('Sobol concentric disk sampling\nsample count = ' + str(len(haltonSamples)), fontsize=10)
+for point in haltonSamples:
+    axs[2, 4].scatter(point[0], point[1])
+
+# ---------------------------------------- golden ratio rejection disk sampling 16 ----------------------------------------
+haltonSamples = goldenRatio.golden_rejection_disk(0.5, 2, 16)
+haltonSamples *= 4.5
+axs[0, 5].plot(5 *np.cos(an), 5 *np.sin(an))
+axs[0, 5].set_aspect('equal', 'box')
+axs[0, 5].set_title('Golden ratio rejection disk sampling\nsample count = ' + str(len(haltonSamples)), fontsize=10)
+for point in haltonSamples:
+    axs[0, 5].scatter(point[0], point[1])
+
+# ---------------------------------------- golden ratio rejection  disk sampling 12 ----------------------------------------
+haltonSamples = goldenRatio.golden_rejection_disk(0.6, 2, 12)
+haltonSamples *= 4.5
+axs[1, 5].plot(5 *np.cos(an), 5 *np.sin(an))
+axs[1, 5].set_aspect('equal', 'box')
+axs[1, 5].set_title('Golden ratio rejection disk sampling\nsample count = ' + str(len(haltonSamples)), fontsize=10)
+for point in haltonSamples:
+    axs[1, 5].scatter(point[0], point[1])
+
+# ---------------------------------------- golden ratio rejectiondisk sampling 9 ----------------------------------------
+haltonSamples = goldenRatio.golden_rejection_disk(0.4, 2, 9)
+haltonSamples *= 4.5
+axs[2, 5].plot(5 *np.cos(an), 5 *np.sin(an))
+axs[2, 5].set_aspect('equal', 'box')
+axs[2, 5].set_title('Golden ratio rejection disk sampling\nsample count = ' + str(len(haltonSamples)), fontsize=10)
+for point in haltonSamples:
+    axs[2, 5].scatter(point[0], point[1])
+
+# ---------------------------------------- golden ratio concentric disk sampling 16 ----------------------------------------
+haltonSamples = diskSampler.get_golden_concentric_samples(0.1, 16)
+haltonSamples *= 4.5
+axs[0, 6].plot(5 *np.cos(an), 5 *np.sin(an))
+axs[0, 6].set_aspect('equal', 'box')
+axs[0, 6].set_title('Golden ratio concentric disk sampling\nsample count = ' + str(len(haltonSamples)), fontsize=10)
+for point in haltonSamples:
+    axs[0, 6].scatter(point[0], point[1])
+
+# ---------------------------------------- golden ratio concentric  disk sampling 12 ----------------------------------------
+haltonSamples = diskSampler.get_golden_concentric_samples(0.1, 12)
+haltonSamples *= 4.5
+axs[1, 6].plot(5 *np.cos(an), 5 *np.sin(an))
+axs[1, 6].set_aspect('equal', 'box')
+axs[1, 6].set_title('Golden ratio concentric disk sampling\nsample count = ' + str(len(haltonSamples)), fontsize=10)
+for point in haltonSamples:
+    axs[1, 6].scatter(point[0], point[1])
+
+# ---------------------------------------- golden ratio concentric disk sampling 9 ----------------------------------------
+haltonSamples = diskSampler.get_golden_concentric_samples(0.1, 9)
+haltonSamples *= 4.5
+axs[2, 6].plot(5 *np.cos(an), 5 *np.sin(an))
+axs[2, 6].set_aspect('equal', 'box')
+axs[2, 6].set_title('Golden ratio concentric disk sampling\nsample count = ' + str(len(haltonSamples)), fontsize=10)
+for point in haltonSamples:
+    axs[2, 6].scatter(point[0], point[1])
 
 fig.tight_layout()
 

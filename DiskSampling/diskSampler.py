@@ -1,6 +1,13 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import halton
+import sobol
+import goldenRatio
+
+def classic_disk_sampling(u):
+    r = np.sqrt(u[0])
+    theta = np.pi * 2 * u[1]
+    return r * np.array([[np.cos(theta), np.sin(theta)]])
 
 def concentric_disk_sampling(u):
     uOffset = u * 2.0 - 1.0
@@ -47,3 +54,27 @@ def get_halton_concentric_samples(size):
         resultList = np.append(resultList, result, axis=0)
     return resultList
 
+def get_halton_classic_disk_samples(size):
+    seq = halton.halton_sequence2(size,[2,3])
+    seq = np.transpose(seq)
+    resultList = np.empty((0, 2), float)
+    for pt in seq:
+        result = classic_disk_sampling(pt)
+        resultList = np.append(resultList, result, axis=0)
+    return resultList
+
+def get_sobol_concentric_samples(size):
+    seq = sobol.sample(dimension=2, n_points=size)
+    resultList = np.empty((0, 2), float)
+    for pt in seq:
+        result = concentric_disk_sampling(pt)
+        resultList = np.append(resultList, result, axis=0)
+    return resultList
+
+def get_golden_concentric_samples(seed, size):
+    seq = goldenRatio.golden_samples(seed, 2, size)
+    resultList = np.empty((0, 2), float)
+    for pt in seq:
+        result = concentric_disk_sampling(pt)
+        resultList = np.append(resultList, result, axis=0)
+    return resultList
